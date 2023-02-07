@@ -22,41 +22,62 @@ package org.asteriskjava.manager.event;
  * @author Asteria Solutions Group, Inc. http://www.asteriasgi.com/
  * @version $Id$
  */
-public class QueueMemberStatusEvent extends QueueMemberEvent {
-    /**
-     * Serializable version identifier
-     */
-    private static final long serialVersionUID = -2293926744791895763L;
+public class QueueMemberStatusEvent extends QueueMemberEvent
+{
+	/**
+	 * Serializable version identifier
+	 */
+	private static final long serialVersionUID = -2293926744791895763L;
 
-    private String ringinuse;
-    private Integer wrapuptime;
+	private String ringinuse;
+	private Integer wrapuptime;
 
-    /**
-     * @param source
-     */
-    public QueueMemberStatusEvent(Object source) {
-        super(source);
-    }
+	private String logintime;
 
-    /**
-     * @return the ringinuse
-     */
-    public String getRinginuse() {
-        return ringinuse;
-    }
+	/**
+	 * @param source
+	 */
+	public QueueMemberStatusEvent(Object source)
+	{
+		super(source);
+	}
 
-    /**
-     * @param ringinuse the ringinuse to set
-     */
-    public void setRinginuse(String ringinuse) {
-        this.ringinuse = ringinuse;
-    }
+	/**
+	 * @return the ringinuse
+	 */
+	public String getRinginuse()
+	{
+		return ringinuse;
+	}
 
-    public Integer getWrapuptime() {
-        return wrapuptime;
-    }
+	/**
+	 * @param ringinuse
+	 *            the ringinuse to set
+	 */
+	public void setRinginuse(String ringinuse)
+	{
+		this.ringinuse = ringinuse;
+	}
 
-    public void setWrapuptime(Integer wrapuptime) {
-        this.wrapuptime = wrapuptime;
-    }
+	@Override
+	public Integer getWrapuptime()
+	{
+		return wrapuptime;
+	}
+
+	@Override
+	public void setWrapuptime(Integer wrapuptime)
+	{
+		this.wrapuptime = wrapuptime;
+	}
+
+	public String getLogintime()
+	{
+		return logintime;
+	}
+
+	public void setLogintime(String logintime)
+	{
+		this.logintime = logintime;
+	}
 }
