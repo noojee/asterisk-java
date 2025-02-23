@@ -1,6 +1,7 @@
 package org.asteriskjava.pbx.internal.asterisk;
 
 import java.util.LinkedList;
+import java.util.UUID;
 
 import org.asteriskjava.lock.Lockable;
 import org.asteriskjava.lock.Locker.LockCloser;
@@ -15,16 +16,12 @@ import org.asteriskjava.util.LogFactory;
  */
 public class MeetmeRoom extends Lockable
 {
-    /**
-     * The asterisk room number. This will be value offset from the Meetme Base.
-     * e.g. if the base is 3750 and this is the third allocated room, then the
-     * roomNumber will equal 3753.
-     */
-    private final int roomNumber;
 
     private static final Log logger = LogFactory.getLog(MeetmeRoom.class);
 
     LinkedList<Channel> channels = new LinkedList<>();
+
+    private final UUID roomNumber = UUID.randomUUID();
 
     private int channelCount = 0;
 
@@ -36,9 +33,11 @@ public class MeetmeRoom extends Lockable
 
     private RoomOwner owner = null;
 
-    public MeetmeRoom(final int number)
+    public MeetmeRoom(RoomOwner owner)
     {
-        this.roomNumber = number;
+        this.owner = owner;
+        owner.setRoom(this);
+        active = true;
     }
 
     /*
@@ -158,11 +157,6 @@ public class MeetmeRoom extends Lockable
 
     }
 
-    public void setActive()
-    {
-        this.active = true;
-    }
-
     public void setForceClose(final boolean canClose)
     {
         this.forceClose = canClose;
@@ -201,11 +195,13 @@ public class MeetmeRoom extends Lockable
         return owner;
     }
 
-    public void setOwner(RoomOwner newOwner)
+    public void clearOwner()
     {
-        owner = newOwner;
-        owner.setRoom(this);
-        setActive();
+        if (owner != null)
+        {
+            owner.setRoom(null);
+        }
+        owner = null;
     }
 
     public void removeOwner(RoomOwner toRemove)

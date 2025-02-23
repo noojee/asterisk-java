@@ -3,11 +3,10 @@ package org.asteriskjava.pbx.internal.asterisk;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
-import java.util.Map.Entry;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.asteriskjava.AsteriskVersion;
-import org.asteriskjava.live.ManagerCommunicationException;
 import org.asteriskjava.lock.Locker.LockCloser;
 import org.asteriskjava.pbx.AsteriskSettings;
 import org.asteriskjava.pbx.Channel;
@@ -15,7 +14,6 @@ import org.asteriskjava.pbx.ListenerPriority;
 import org.asteriskjava.pbx.PBX;
 import org.asteriskjava.pbx.PBXException;
 import org.asteriskjava.pbx.PBXFactory;
-import org.asteriskjava.pbx.asterisk.wrap.actions.CommandAction;
 import org.asteriskjava.pbx.asterisk.wrap.actions.ConfbridgeListAction;
 import org.asteriskjava.pbx.asterisk.wrap.events.ConfbridgeListEvent;
 import org.asteriskjava.pbx.asterisk.wrap.events.ManagerEvent;
@@ -23,8 +21,6 @@ import org.asteriskjava.pbx.asterisk.wrap.events.MeetMeJoinEvent;
 import org.asteriskjava.pbx.asterisk.wrap.events.MeetMeLeaveEvent;
 import org.asteriskjava.pbx.asterisk.wrap.events.ResponseEvent;
 import org.asteriskjava.pbx.asterisk.wrap.events.ResponseEvents;
-import org.asteriskjava.pbx.asterisk.wrap.response.CommandResponse;
-import org.asteriskjava.pbx.asterisk.wrap.response.ManagerResponse;
 import org.asteriskjava.pbx.internal.core.AsteriskPBX;
 import org.asteriskjava.pbx.internal.core.CoherentManagerEventListener;
 import org.asteriskjava.pbx.internal.managerAPI.EventListenerBaseClass;
@@ -44,7 +40,7 @@ public class MeetmeRoomControl extends EventListenerBaseClass implements Coheren
 
     private Integer meetmeBaseAddress;
 
-    private MeetmeRoom rooms[];
+    private final Map<String, MeetmeRoom> rooms = new ConcurrentHashMap<>();
 
     private int roomCount;
 
@@ -82,7 +78,7 @@ public class MeetmeRoomControl extends EventListenerBaseClass implements Coheren
         this.roomCount = roomCount;
         final AsteriskSettings settings = PBXFactory.getActiveProfile();
         this.meetmeBaseAddress = settings.getMeetmeBaseAddress();
-        this.rooms = new MeetmeRoom[roomCount];
+
         this.configure((AsteriskPBX) pbx);
 
         this.startListener();
@@ -108,7 +104,7 @@ public class MeetmeRoomControl extends EventListenerBaseClass implements Coheren
         try (LockCloser closer = this.withLock())
         {
             int count = 0;
-            for (final MeetmeRoom room : this.rooms)
+            for (final MeetmeRoom room : this.rooms.values())
             {
                 if (MeetmeRoomControl.logger.isDebugEnabled())
                 {
@@ -147,9 +143,9 @@ public class MeetmeRoomControl extends EventListenerBaseClass implements Coheren
                     if (room.getChannelCount() == 0)
                     {
                         room.setInactive();
-                        room.setOwner(newOwner);
-                        MeetmeRoomControl.logger.info("Returning available room " + room.getRoomNumber());
-                        return room;
+                        room.clearOwner();
+                        MeetmeRoomControl.logger.info("freeing available room " + room.getRoomNumber());
+                        rooms.remove(room.getRoomNumber());
                     }
 
                 }
@@ -159,8 +155,12 @@ public class MeetmeRoomControl extends EventListenerBaseClass implements Coheren
                 }
                 count++;
             }
-            MeetmeRoomControl.logger.error("no more available rooms");
-            return null;
+
+            MeetmeRoom room = new MeetmeRoom(newOwner);
+            rooms.put(room.getRoomNumber(), room);
+            MeetmeRoomControl.logger.info("Returning available room " + room.getRoomNumber());
+
+            return room;
         }
     }
 
@@ -175,26 +175,9 @@ public class MeetmeRoomControl extends EventListenerBaseClass implements Coheren
     {
         try (LockCloser closer = this.withLock())
         {
-            MeetmeRoom foundRoom = null;
-            for (final MeetmeRoom room : this.rooms)
-            {
-                if (room.getRoomNumber().compareToIgnoreCase(roomNumber) == 0)
-                {
-                    foundRoom = room;
-                    break;
-                }
-            }
-            return foundRoom;
+            return rooms.get(roomNumber);
         }
 
-    }
-
-    MeetmeRoom getRoom(final int room)
-    {
-        try (LockCloser closer = this.withLock())
-        {
-            return this.rooms[room];
-        }
     }
 
     @Override
@@ -275,18 +258,10 @@ public class MeetmeRoomControl extends EventListenerBaseClass implements Coheren
 
     private void configure(AsteriskPBX pbx) throws NoMeetmeException
     {
-        final int base = this.meetmeBaseAddress;
-        for (int r = 0; r < this.roomCount; r++)
-        {
-            this.rooms[r] = new MeetmeRoom(r + base);
-        }
-
         try
         {
-            String command;
             if (pbx.getVersion().isAtLeast(AsteriskVersion.ASTERISK_13))
             {
-                command = "ConfBridge list"; //$NON-NLS-1$
                 ConfbridgeListAction action = new ConfbridgeListAction();
                 final ResponseEvents response = pbx.sendEventGeneratingAction(action, 3000);
                 Map<String, Integer> roomChannelCount = new HashMap<>();
@@ -304,111 +279,14 @@ public class MeetmeRoomControl extends EventListenerBaseClass implements Coheren
                         roomChannelCount.put(e.getConference(), current + 1);
                     }
                 }
-                for (Entry<String, Integer> entry : roomChannelCount.entrySet())
-                {
-                    setRoomCount(entry.getKey(), entry.getValue(), Integer.parseInt(entry.getKey()));
-
-                }
                 this.meetmeInstalled = true;
 
             }
-            else
-            {
-                if (pbx.getVersion().isAtLeast(AsteriskVersion.ASTERISK_1_6))
-                {
-                    command = "meetme list"; //$NON-NLS-1$
-                }
-                else
-                {
-                    command = "meetme"; //$NON-NLS-1$
-                }
-                final CommandAction commandAction = new CommandAction(command);
-                final ManagerResponse response = pbx.sendAction(commandAction, 3000);
-                if (!(response instanceof CommandResponse))
-                {
-                    throw new ManagerCommunicationException(response.getMessage(), null);
-                }
-
-                final CommandResponse commandResponse = (CommandResponse) response;
-                MeetmeRoomControl.logger.debug("parsing active meetme rooms"); //$NON-NLS-1$
-                for (final String line : commandResponse.getResult())
-                {
-                    this.parseMeetme(line);
-                    this.meetmeInstalled = true;
-                    MeetmeRoomControl.logger.debug(line);
-                }
-            }
-        }
-        catch (final NoMeetmeException e)
-        {
-            throw e;
         }
         catch (final Exception e)
         {
             MeetmeRoomControl.logger.error(e, e);
             throw new NoMeetmeException(e.getLocalizedMessage());
-        }
-    }
-
-    private void parseMeetme(final String line) throws NoMeetmeException
-    {
-        try (LockCloser closer = this.withLock())
-        {
-            if (line != null)
-            {
-                if (line.toLowerCase().startsWith("no such command 'meetme'")) //$NON-NLS-1$
-                {
-                    throw new NoMeetmeException("Asterisk is not configured correctly! Please enable the MeetMe app"); //$NON-NLS-1$
-                }
-
-                if ((!line.toLowerCase().startsWith("no active meetme conferences.")) //$NON-NLS-1$
-                        && (!line.toLowerCase().startsWith("conf num")) //$NON-NLS-1$
-                        && (!line.toLowerCase().startsWith("* total number")) //$NON-NLS-1$
-                        && (!line.toLowerCase().startsWith("no such conference")) //$NON-NLS-1$
-                        && (!line.toLowerCase().startsWith("no such command 'meetme")) //$NON-NLS-1$
-                )
-                {
-                    // Update the stats on each meetme
-                    final String roomNumber = line.substring(0, 10).trim();
-                    final String tmp = line.substring(11, 25).trim();
-                    final int channelCount = Integer.parseInt(tmp);
-
-                    final int roomNo = Integer.valueOf(roomNumber);
-                    setRoomCount(roomNumber, channelCount, roomNo);
-                }
-            }
-        }
-    }
-
-    private void setRoomCount(final String roomNumber, final int channelCount, final int roomNo)
-    {
-        Integer base = this.meetmeBaseAddress;
-        // First check if its one of our rooms.
-        if ((roomNo >= base) && (roomNo < (base + this.roomCount)))
-        {
-            final MeetmeRoom room = this.findMeetmeRoom(roomNumber);
-            if (room != null)
-            {
-                if (room.getChannelCount() != channelCount)
-                {
-                    /*
-                     * After a restart there may have been meetme rooms left up
-                     * and running with live calls. We need to identify any
-                     * active rooms so we don't accidentally re-use an active
-                     * room which would result in a crossed channel.
-                     */
-                    MeetmeRoomControl.logger.warn("Room number: " + room.getRoomNumber() //$NON-NLS-1$
-                            + " has a server side channel count = " + channelCount //$NON-NLS-1$
-                            + " when the channel count for that room is: " + room.getChannelCount() //$NON-NLS-1$
-                            + " the server side channel count will be reset."); //$NON-NLS-1$
-                }
-                room.resetChannelCount(channelCount);
-                room.setActive();
-            }
-            // else "Found roomNumber:" + roomNumber + " but it was not
-            // in the list of rooms managed by MeetmeRoomControl.");
-            // //$NON-NLS-1$ //$NON-NLS-2$
-
         }
     }
 
